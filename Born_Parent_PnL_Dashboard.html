@@ -58,9 +58,22 @@ h1,h2,h3{font-family:'Sora',sans-serif;margin:0;}
 .btn.active{background:var(--gold);color:#fff;border-color:var(--gold);}
 .partialtag{font-size:10.5px;background:var(--gold-pale);color:var(--gold-deep);padding:2px 7px;border-radius:5px;font-weight:700;letter-spacing:.02em;}
 
+/* ---- prior period toggle switch ---- */
+.priorbar{display:flex;align-items:center;gap:12px;margin-bottom:16px;}
+.iosswitch{position:relative;display:inline-block;width:44px;height:25px;flex-shrink:0;}
+.iosswitch input{opacity:0;width:0;height:0;}
+.iosswitch .slider{position:absolute;cursor:pointer;inset:0;background:#D5D0C2;transition:.2s;border-radius:25px;}
+.iosswitch .slider:before{content:'';position:absolute;height:19px;width:19px;left:3px;top:3px;background:#fff;transition:.2s;border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.25);}
+.iosswitch input:checked + .slider{background:var(--gold);}
+.iosswitch input:checked + .slider:before{transform:translateX(19px);}
+.priorbar .priorlabel{font-size:15px;font-weight:700;color:var(--ink-soft);cursor:pointer;user-select:none;}
+.priorbar input:checked ~ .priorlabel{color:var(--ink);}
+
 /* ---- KPI cards ---- */
 .section-title{font-size:16px;font-weight:800;color:var(--ink);margin:4px 0 12px;display:flex;align-items:center;gap:10px;}
 .kpirow{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+.kpirow.summary{grid-template-columns:repeat(4,1fr);}
+@media (max-width:1300px){.kpirow.summary{grid-template-columns:repeat(2,1fr);}}
 .kpi{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:16px 18px;box-shadow:var(--shadow);position:relative;overflow:hidden;}
 .kpi::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--gold);}
 .kpi .lbl{font-size:11.5px;color:var(--ink-soft);font-weight:700;text-transform:uppercase;letter-spacing:.03em;}
@@ -80,7 +93,14 @@ h1,h2,h3{font-family:'Sora',sans-serif;margin:0;}
 .kpi.total .trailing-row .tp-lbl{color:#B8B2A0;}
 .trailing-row .tp-val{font-weight:700;color:var(--ink);}
 .kpi.total .trailing-row .tp-val{color:#fff;}
-@media (max-width:1100px){.kpirow{grid-template-columns:repeat(2,1fr);}}
+.kpi .delta{display:none;align-items:center;gap:5px;margin-top:8px;font-size:13px;font-weight:700;}
+.wrap.show-prior .kpi .delta{display:flex;}
+.kpi .delta.up{color:var(--good);}
+.kpi .delta.down{color:var(--bad);}
+.kpi .delta.flat{color:var(--ink-soft);}
+.kpi.total .delta.up{color:#5FCF9B;}
+.kpi.total .delta.down{color:#F0897A;}
+@media (max-width:1100px){.kpirow{grid-template-columns:repeat(2,1fr);} .kpirow.summary{grid-template-columns:repeat(2,1fr);}}
 
 .chartcard{background:var(--card);border:1px solid var(--border);border-radius:13px;padding:18px;box-shadow:var(--shadow);margin-bottom:22px;}
 .chartcard h3{font-size:14.5px;font-weight:800;margin-bottom:14px;color:var(--ink);}
@@ -157,13 +177,23 @@ footer{text-align:center;font-size:11.5px;color:var(--ink-soft);margin-top:28px;
     <span class="plabel">Period</span>
     <select id="periodSelect"></select>
     <span id="partialTag"></span>
-    <button class="btn" id="priorToggleBtn">Show Prior Periods</button>
     <span class="note">% shown is share of Total Revenue for the selected period</span>
   </div>
 
   <!-- OVERVIEW -->
   <section class="tabpanel active" id="tab-overview">
-    <div class="section-title">Revenue KPIs</div>
+    <div class="priorbar">
+      <label class="iosswitch">
+        <input type="checkbox" id="priorToggleInput">
+        <span class="slider"></span>
+      </label>
+      <label class="priorlabel" for="priorToggleInput" id="priorToggleLabel">Prior Periods</label>
+    </div>
+
+    <div class="section-title">Summary KPIs</div>
+    <div class="kpirow summary" id="kpiSummaryGrid"></div>
+
+    <div class="section-title">Revenue Line Item KPIs</div>
     <div class="kpirow" id="kpiGrid"></div>
 
     <div class="chartcard">
@@ -333,16 +363,44 @@ function initPeriodSelect(){
 }
 
 function initPriorToggle(){
-  var btn = document.getElementById('priorToggleBtn');
-  btn.addEventListener('click', function(){
-    state.showPrior = !state.showPrior;
-    btn.classList.toggle('active', state.showPrior);
-    btn.textContent = state.showPrior ? 'Hide Prior Periods' : 'Show Prior Periods';
+  var input = document.getElementById('priorToggleInput');
+  var label = document.getElementById('priorToggleLabel');
+  input.addEventListener('change', function(){
+    state.showPrior = input.checked;
+    label.textContent = 'Prior Periods';
     document.getElementById('wrap').classList.toggle('show-prior', state.showPrior);
   });
 }
 
-/* ---------- KPIs (with trailing 3-period info) ---------- */
+/* ---------- KPIs (summary row + revenue line items, with trailing + delta) ---------- */
+function trailingHtmlFor(idx, periods, getVal){
+  var rows = '';
+  for (var k = 0; k < 3; k++){
+    var pi = idx + k;
+    if (pi >= periods.length) break;
+    var agg = getAgg(state.periodType, pi);
+    var v = getVal(agg);
+    rows += '<div class="trailing-row"><span class="tp-lbl">'+periods[pi].label+'</span><span class="tp-val">'+fmtLakh(v)+'</span></div>';
+  }
+  return '<div class="trailing">'+rows+'</div>';
+}
+
+function deltaHtmlFor(idx, periods, getVal, invert){
+  var priorIdx = idx + 1;
+  if (priorIdx >= periods.length) return '';
+  var curAgg = getAgg(state.periodType, idx);
+  var priorAgg = getAgg(state.periodType, priorIdx);
+  var curV = getVal(curAgg), priorV = getVal(priorAgg);
+  if (priorV === 0 || priorV === null || priorV === undefined) return '';
+  var pct = (curV - priorV) / Math.abs(priorV);
+  var isUp = pct > 0.0005, isDown = pct < -0.0005;
+  var goodDirectionUp = !invert; // for revenue/EBITDA/net earnings, up=good; for expenses, up=bad
+  var cls = 'flat', arrow = '▬';
+  if (isUp){ arrow = '▲'; cls = goodDirectionUp ? 'up' : 'down'; }
+  else if (isDown){ arrow = '▼'; cls = goodDirectionUp ? 'down' : 'up'; }
+  return '<div class="delta '+cls+'">'+arrow+' '+fmtPct(Math.abs(pct))+' vs prior period</div>';
+}
+
 function renderKPIs(){
   var periods = currentPeriods();
   var idx = state.periodIdx;
@@ -350,24 +408,37 @@ function renderKPIs(){
   var total = cur.totalRevenue;
   var pLabel = periods[idx].label;
 
-  function trailingHtml(getVal){
-    var rows = '';
-    for (var k = 0; k < 3; k++){
-      var pi = idx + k;
-      if (pi >= periods.length) break;
-      var agg = getAgg(state.periodType, pi);
-      var v = getVal(agg);
-      rows += '<div class="trailing-row"><span class="tp-lbl">'+periods[pi].label+'</span><span class="tp-val">'+fmtLakh(v)+'</span></div>';
-    }
-    return '<div class="trailing">'+rows+'</div>';
-  }
+  /* -------- summary row: Total Revenue, Net Revenue, Total Expenses, EBITDA, Net Earnings -------- */
+  var sHtml = '';
+  sHtml += '<div class="kpi total"><div class="lbl">Total Revenue</div><div class="val">'+fmtLakh(total)+'</div><div class="sub2">'+pLabel+' · 100% of revenue</div>'
+    + deltaHtmlFor(idx, periods, function(a){return a.totalRevenue;}, false)
+    + trailingHtmlFor(idx, periods, function(a){return a.totalRevenue;}) + '</div>';
 
+  var expRatio = total ? cur.totalExpenses/total : 0;
+  sHtml += '<div class="kpi"><div class="lbl">Total Expenses</div><div class="val">'+fmtLakh(cur.totalExpenses)+'<span class="pct">'+fmtPct(expRatio)+'</span></div><div class="sub2">of total revenue</div>'
+    + deltaHtmlFor(idx, periods, function(a){return a.totalExpenses;}, true)
+    + trailingHtmlFor(idx, periods, function(a){return a.totalExpenses;}) + '</div>';
+
+  var ebitdaMargin = total ? cur.ebitda/total : 0;
+  sHtml += '<div class="kpi"><div class="lbl">EBITDA</div><div class="val">'+fmtLakh(cur.ebitda)+'<span class="pct">'+fmtPct(ebitdaMargin)+'</span></div><div class="sub2">margin</div>'
+    + deltaHtmlFor(idx, periods, function(a){return a.ebitda;}, false)
+    + trailingHtmlFor(idx, periods, function(a){return a.ebitda;}) + '</div>';
+
+  var netMargin = total ? cur.netEarnings/total : 0;
+  sHtml += '<div class="kpi"><div class="lbl">Net Earnings</div><div class="val">'+fmtLakh(cur.netEarnings)+'<span class="pct">'+fmtPct(netMargin)+'</span></div><div class="sub2">margin</div>'
+    + deltaHtmlFor(idx, periods, function(a){return a.netEarnings;}, false)
+    + trailingHtmlFor(idx, periods, function(a){return a.netEarnings;}) + '</div>';
+
+  document.getElementById('kpiSummaryGrid').innerHTML = sHtml;
+
+  /* -------- revenue line item row -------- */
   var html = '';
-  html += '<div class="kpi total"><div class="lbl">Total Revenue</div><div class="val">'+fmtLakh(total)+'</div><div class="sub2">'+pLabel+' · 100% of revenue</div>'+trailingHtml(function(a){return a.totalRevenue;})+'</div>';
   Object.keys(DATA.revenueItems).forEach(function(label){
     var v = cur.revenueItems[label];
     var pct = total ? v/total : 0;
-    html += '<div class="kpi"><div class="lbl">'+label+'</div><div class="val">'+fmtLakh(v)+'<span class="pct">'+fmtPct(pct)+'</span></div><div class="sub2">of total revenue</div>'+trailingHtml(function(a){return a.revenueItems[label];})+'</div>';
+    html += '<div class="kpi"><div class="lbl">'+label+'</div><div class="val">'+fmtLakh(v)+'<span class="pct">'+fmtPct(pct)+'</span></div><div class="sub2">of total revenue</div>'
+      + deltaHtmlFor(idx, periods, function(a){return a.revenueItems[label];}, false)
+      + trailingHtmlFor(idx, periods, function(a){return a.revenueItems[label];}) + '</div>';
   });
   document.getElementById('kpiGrid').innerHTML = html;
 }
